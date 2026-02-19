@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import LiveMap, { type RouteExplanation } from './components/LiveMap';
 import Chatbot from './components/Chatbot';
+import HospitalDirectory from './components/HospitalDirectory';
 import { initialCalls, initialAmbulances, initialHospitals, congestionZones } from './data';
 import type { EmergencyCall, AmbulanceUnit, HospitalInfo } from './types';
 
@@ -116,7 +117,7 @@ function buildRouteExplanation(
 // ── Main App ──────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'emergency' | 'map' | 'hospitals' | 'analytics'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'emergency' | 'map' | 'directory' | 'analytics'>('dashboard');
   const [calls, setCalls] = useState<EmergencyCall[]>(initialCalls);
   const [ambulances, setAmbulances] = useState<AmbulanceUnit[]>(initialAmbulances);
   const [hospitals] = useState<HospitalInfo[]>(initialHospitals);
@@ -465,7 +466,7 @@ export default function App() {
             { id: 'dashboard', label: 'Dashboard', icon: Home },
             { id: 'emergency', label: 'Emergency Calls', icon: Phone },
             { id: 'map', label: 'Live Map', icon: MapPin },
-            { id: 'hospitals', label: 'Hospitals', icon: Building2 },
+            { id: 'directory', label: 'Hospital Directory', icon: Building2 },
             { id: 'analytics', label: 'Analytics', icon: BarChart3 },
           ].map(tab => (
             <button
@@ -1022,54 +1023,25 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ HOSPITALS ══════════════════════════════════════════════════════ */}
-        {activeTab === 'hospitals' && (
-          <div className="space-y-5">
-            <div className="bg-white rounded-xl border shadow-sm p-4 flex items-center gap-3">
-              <Building2 className="w-5 h-5 text-teal-600" />
-              <div>
-                <p className="font-bold text-sm">All India Hospital Network — {hospitals.length} Hospitals</p>
-                <p className="text-xs text-gray-500">Real-time bed availability across Tamil Nadu, Karnataka, Maharashtra, Delhi, West Bengal, Telangana, Gujarat, Kerala, UP, Rajasthan</p>
+        {/* ══ HOSPITAL DIRECTORY ═════════════════════════════════════════════ */}
+        {activeTab === 'directory' && (
+          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Building2 className="w-6 h-6" />
+                  <div>
+                    <h2 className="text-lg font-bold">Hospital Directory</h2>
+                    <p className="text-xs text-blue-200">All India Hospital Network — Government & Private</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-extrabold">{hospitals.length}</p>
+                  <p className="text-xs text-blue-200">Hospitals</p>
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {hospitals.map(hosp => {
-                const beds = hospitalBeds[hosp.id]?.beds ?? hosp.bedsAvailable;
-                const icu = hospitalBeds[hosp.id]?.icu ?? hosp.icuBeds;
-                return (
-                  <div key={hosp.id} className="bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition-shadow">
-                    <div className="bg-gradient-to-r from-teal-700 to-teal-800 text-white px-5 py-4">
-                      <h3 className="font-bold text-sm">{hosp.name}</h3>
-                      <p className="text-xs text-teal-200 mt-0.5">{hosp.address}</p>
-                    </div>
-                    <div className="p-4">
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <div className={`text-center p-2 rounded-xl border ${beds > 10 ? 'bg-green-50 border-green-200' : beds > 0 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
-                          <p className="text-[10px] text-gray-500">Beds</p>
-                          <p className={`text-xl font-extrabold ${beds > 10 ? 'text-green-600' : beds > 0 ? 'text-amber-600' : 'text-red-600'}`}>{beds}</p>
-                        </div>
-                        <div className="text-center p-2 bg-blue-50 border border-blue-200 rounded-xl">
-                          <p className="text-[10px] text-gray-500">ICU</p>
-                          <p className="text-xl font-extrabold text-blue-600">{icu}</p>
-                        </div>
-                        <div className={`text-center p-2 rounded-xl border ${hosp.emergencyRoom ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
-                          <p className="text-[10px] text-gray-500">ER</p>
-                          <p className={`text-xl font-extrabold ${hosp.emergencyRoom ? 'text-red-600' : 'text-gray-400'}`}>{hosp.emergencyRoom ? '✓' : '✗'}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mb-2">
-                        {hosp.specialties.map(s => <span key={s} className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full text-[10px]">{s}</span>)}
-                      </div>
-                      <p className="text-xs text-gray-500">📞 {hosp.phone}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-4 py-3 border-b"><h2 className="font-bold text-sm">All India Hospital Network Map</h2></div>
-              <LiveMap calls={[]} ambulances={[]} hospitals={hospitals} congestionZones={congestionZones} height="450px" />
-            </div>
+            <HospitalDirectory />
           </div>
         )}
 
