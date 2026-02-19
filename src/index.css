@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+/* Smooth scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #a1a1a1; }
+
+/* Tabular numbers */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Slide up animation */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-in { animation: slideUp 0.3s ease-out; }
+
+/* Ensure map container fills properly */
+.leaflet-container {
+  font-family: inherit !important;
+  background: #e8e0d8 !important;
+}
