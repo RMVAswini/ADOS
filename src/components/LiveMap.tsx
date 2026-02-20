@@ -8,6 +8,8 @@ export interface RouteExplanation {
   waypoints: [number, number][];
   avoidedZones: string[];
   trafficLevel: string;
+  /** Approximate delay in minutes due to traffic/congestion */
+  delayMinutes?: number;
 }
 
 interface LiveMapProps {
@@ -143,49 +145,57 @@ function injectLeafletCSS() {
 }
 
 const emergencyIcon = (L: typeof import('leaflet'), severity: string) => {
+  // Smaller emergency marker so multiple incidents are clearly visible
   const color = severity === 'critical' ? '#DC2626' : severity === 'high' ? '#EA580C' : severity === 'medium' ? '#D97706' : '#16A34A';
   return L.divIcon({
     className: 'custom-marker',
     html: `<div style="position:relative;">
-      <div style="width:40px;height:40px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(0,0,0,0.4);border:3px solid white;animation:ambPulse 1s infinite alternate;">
-        <span style="font-size:18px;">⚠</span>
+      <div style="width:24px;height:24px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.35);border:2px solid white;animation:ambPulse 1s infinite alternate;">
+        <span style="font-size:13px;">⚠</span>
       </div>
-      <div style="position:absolute;top:-26px;left:50%;transform:translateX(-50%);background:#1F2937;color:white;padding:2px 8px;border-radius:4px;font-size:10px;white-space:nowrap;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,0.3);">${severity.toUpperCase()}</div>
     </div>`,
-    iconSize: [40, 40],
-    iconAnchor: [20, 40],
+    iconSize: [24, 24],
+    iconAnchor: [12, 24],
   });
 };
 
 const ambulanceIcon = (L: typeof import('leaflet'), status: string, type: string, heading: number = 0) => {
+  // Google‑Maps‑style inverted‑teardrop pin for ambulances
   const color = status === 'available' ? '#16A34A' : status === 'maintenance' ? '#6B7280' : ['en_route', 'dispatched'].includes(status) ? '#DC2626' : status === 'to_hospital' ? '#0D9488' : '#EA580C';
+  const isBusy = ['dispatched', 'en_route', 'to_hospital'].includes(status);
   const typeLabel = type === 'icu' ? 'ICU' : type === 'advanced' ? 'ALS' : 'BLS';
-  const isMoving = ['dispatched', 'en_route', 'to_hospital'].includes(status);
+
   return L.divIcon({
     className: 'custom-marker',
-    html: `<div style="transform:rotate(${heading}deg);position:relative;">
-      <div style="width:46px;height:46px;border-radius:10px;background:${color};display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.4);border:3px solid white;${isMoving ? 'animation:ambPulse 0.7s infinite alternate;' : ''}">
-        <span style="font-size:22px;">🚑</span>
+    html: `
+      <div style="position:relative;transform:rotate(${heading}deg);">
+        <div style="width:22px;height:22px;border-radius:50% 50% 50% 0;background:${color};transform:rotate(45deg);box-shadow:0 2px 8px rgba(0,0,0,0.35);border:2px solid white;display:flex;align-items:center;justify-content:center;${isBusy ? 'animation:ambPulse 0.9s infinite alternate;' : ''}">
+          <span style="transform:rotate(-45deg);font-size:13px;">🚑</span>
+        </div>
+        <div style="position:absolute;top:-18px;left:50%;transform:translateX(-50%) rotate(-${heading}deg);background:rgba(15,23,42,0.9);color:white;padding:1px 4px;border-radius:999px;font-size:8px;white-space:nowrap;font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,0.4);">
+          ${typeLabel}${isBusy ? ' • BUSY' : ''}
+        </div>
       </div>
-      <div style="position:absolute;top:-22px;left:50%;transform:translateX(-50%) rotate(-${heading}deg);background:${color};color:white;padding:1px 6px;border-radius:3px;font-size:9px;white-space:nowrap;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,0.4);">${typeLabel}${isMoving ? ' 🚨' : ''}</div>
-    </div>`,
-    iconSize: [46, 46],
-    iconAnchor: [23, 46],
+    `,
+    iconSize: [22, 30],
+    iconAnchor: [11, 26],
   });
 };
 
 const hospitalMarkerIcon = (L: typeof import('leaflet'), hasER: boolean) => {
+  // Google‑Maps‑style small hospital pin
   const color = hasER ? '#0F766E' : '#6B7280';
   return L.divIcon({
     className: 'custom-marker',
-    html: `<div style="position:relative;">
-      <div style="width:38px;height:38px;border-radius:8px;background:${color};display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);border:2px solid white;animation:hospitalPulse 2s infinite alternate;">
-        <span style="font-size:18px;">🏥</span>
+    html: `
+      <div style="position:relative;">
+        <div style="width:20px;height:20px;border-radius:50% 50% 50% 0;background:${color};transform:rotate(45deg);box-shadow:0 2px 6px rgba(0,0,0,0.35);border:2px solid white;display:flex;align-items:center;justify-content:center;animation:hospitalPulse 2s infinite alternate;">
+          <span style="transform:rotate(-45deg);font-size:12px;">H</span>
+        </div>
       </div>
-      <div style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);background:${color};color:white;padding:1px 5px;border-radius:3px;font-size:8px;white-space:nowrap;font-weight:700;">ER${hasER ? ' ✓' : ''}</div>
-    </div>`,
-    iconSize: [38, 38],
-    iconAnchor: [19, 38],
+    `,
+    iconSize: [20, 28],
+    iconAnchor: [10, 24],
   });
 };
 
@@ -288,20 +298,17 @@ export default function LiveMap({
           zIndexOffset: 1000,
         });
 
-        marker.bindPopup(`
+        const tooltipHtml = `
           <div style="min-width:220px;font-family:system-ui;">
-            <div style="background:${amb.status === 'available' ? '#16A34A' : amb.status === 'to_hospital' ? '#0D9488' : '#DC2626'};color:white;padding:10px 14px;margin:-10px -16px 10px;border-radius:12px 12px 0 0;">
-              <strong style="font-size:15px;">🚑 ${amb.id}</strong><br>
-              <span style="font-size:11px;opacity:0.85;">${amb.type.toUpperCase()} — ${amb.vehicleNumber}</span>
-            </div>
-            <p style="margin:6px 0;font-size:13px;"><strong>👤 ${amb.driverName}</strong></p>
-            <p style="margin:4px 0;font-size:12px;">Status: <strong>${amb.status.replace(/_/g, ' ').toUpperCase()}</strong></p>
-            ${call ? `<p style="margin:4px 0;font-size:11px;color:#0D9488;">📞 ${call.id} | ${call.severity.toUpperCase()}</p>` : ''}
-            <p style="margin:4px 0;font-size:10px;color:#6B7280;">📍 ${amb.location.lat.toFixed(5)}, ${amb.location.lng.toFixed(5)}</p>
+            <div style="font-size:13px;font-weight:700;margin-bottom:2px;">🚑 ${amb.id}</div>
+            <p style="margin:2px 0;font-size:11px;">${amb.type.toUpperCase()} • ${amb.vehicleNumber}</p>
+            <p style="margin:2px 0;font-size:11px;">Status: <strong>${amb.status.replace(/_/g, ' ').toUpperCase()}</strong></p>
+            ${call ? `<p style="margin:2px 0;font-size:11px;color:#0D9488;">📞 ${call.id} | ${call.severity.toUpperCase()}</p>` : ''}
+            <p style="margin:2px 0;font-size:10px;color:#6B7280;">📍 ${amb.location.lat.toFixed(5)}, ${amb.location.lng.toFixed(5)}</p>
           </div>
-        `);
+        `;
 
-        marker.on('click', () => marker.openPopup());
+        marker.bindTooltip(tooltipHtml, { direction: 'top', offset: [0, -18], opacity: 0.95, sticky: true });
         markersRef.current!.addLayer(marker);
         ambMarkersRef.current.set(amb.id, marker);
       }
@@ -352,8 +359,10 @@ export default function LiveMap({
           ${call.assignedHospital ? `<p style="margin:4px 0;font-size:11px;background:#CCFBF1;padding:5px 8px;border-radius:6px;color:#134E4A;">🏥 → ${call.assignedHospital}</p>` : ''}
         </div>
       `);
-      marker.on('click', () => { onSelectCall?.(call.id); marker.openPopup(); });
-      if (call.id === selectedCallId) setTimeout(() => marker.openPopup(), 200);
+      // Show call details only when hovering over the marker
+      marker.on('mouseover', () => marker.openPopup());
+      marker.on('mouseout', () => marker.closePopup());
+      marker.on('click', () => { onSelectCall?.(call.id); });
 
       // Pulse ring
       const ring = L.circle([call.location.lat, call.location.lng], {
@@ -419,13 +428,15 @@ export default function LiveMap({
       if (['dispatched', 'en_route'].includes(amb.status)) {
         const route = generateSmartRoute(amb.location.lat, amb.location.lng, call.location.lat, call.location.lng, zones);
 
-        const shadow = L.polyline(route as L.LatLngExpression[], { color: '#7F1D1D', weight: 12, opacity: 0.15 });
-        routesRef.current!.addLayer(shadow);
-        shadow.bringToBack();
-
-        const line = L.polyline(route as L.LatLngExpression[], {
-          color: '#DC2626', weight: 5, opacity: 0.9, dashArray: '14, 9', lineCap: 'round',
+        // Blue corridor similar to Google Maps (dark core + lighter halo)
+        const outer = L.polyline(route as L.LatLngExpression[], {
+          color: '#93C5FD', weight: 9, opacity: 0.9, lineCap: 'round', lineJoin: 'round',
         });
+        const line = L.polyline(route as L.LatLngExpression[], {
+          color: '#1D4ED8', weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round',
+        });
+        routesRef.current!.addLayer(outer);
+        routesRef.current!.addLayer(line);
 
         const exp = routeExplanations[amb.id];
         line.bindPopup(`
@@ -435,7 +446,7 @@ export default function LiveMap({
             </div>
             ${exp ? `
               <p style="margin:4px 0;font-size:12px;">📏 <strong>${exp.distance}</strong> &nbsp; ⏱ <strong>${exp.duration}</strong></p>
-              <p style="margin:4px 0;font-size:12px;">🚦 Traffic: <strong style="color:${exp.trafficLevel === 'Clear' ? '#16A34A' : '#DC2626'}">${exp.trafficLevel}</strong></p>
+              <p style="margin:4px 0;font-size:12px;">🚦 Traffic: <strong style="color:${exp.trafficLevel === 'Clear' ? '#16A34A' : '#DC2626'}">${exp.trafficLevel}</strong>${exp.delayMinutes ? ` • ~${exp.delayMinutes} min delay` : ''}</p>
               <hr style="margin:8px 0;border-color:#F3F4F6;">
               <p style="font-size:11px;font-weight:700;color:#1F2937;margin:0 0 4px;">📋 Why this route?</p>
               <p style="font-size:11px;color:#374151;background:#FEF2F2;padding:6px;border-radius:6px;margin:0;">${exp.reason}</p>
@@ -465,7 +476,7 @@ export default function LiveMap({
         hShadow.bringToBack();
 
         const hLine = L.polyline(hRoute as L.LatLngExpression[], {
-          color: '#0D9488', weight: 5, opacity: 0.9, dashArray: '14, 9', lineCap: 'round',
+          color: '#2563EB', weight: 5, opacity: 0.95, dashArray: '10, 6', lineCap: 'round',
         });
 
         const exp = routeExplanations[`${amb.id}_hospital`];
@@ -476,7 +487,7 @@ export default function LiveMap({
             </div>
             ${exp ? `
               <p style="margin:4px 0;font-size:12px;">📏 <strong>${exp.distance}</strong> &nbsp; ⏱ <strong>${exp.duration}</strong></p>
-              <p style="margin:4px 0;font-size:12px;">🚦 Traffic: <strong>${exp.trafficLevel}</strong></p>
+              <p style="margin:4px 0;font-size:12px;">🚦 Traffic: <strong>${exp.trafficLevel}</strong>${exp.delayMinutes ? ` • ~${exp.delayMinutes} min delay` : ''}</p>
               <hr style="margin:8px 0;border-color:#F3F4F6;">
               <p style="font-size:11px;font-weight:700;color:#1F2937;margin:0 0 4px;">🏥 Why this hospital?</p>
               <p style="font-size:11px;color:#374151;background:#F0FDFA;padding:6px;border-radius:6px;margin:0;">${exp.reason}</p>
@@ -549,26 +560,27 @@ export default function LiveMap({
     trailRef.current.clearLayers();
 
     ambulances.forEach(amb => {
+      // Show trails only for ambulances that are actively handling a case
       if (amb.routeHistory.length < 2) return;
-      if (trackingAmbulanceId && amb.id !== trackingAmbulanceId) return;
+      if (!['dispatched', 'en_route', 'to_hospital'].includes(amb.status)) return;
 
-      const history = amb.routeHistory.slice(-50);
+      const history = amb.routeHistory.slice(-80);
       if (history.length >= 2) {
         const trail = L.polyline(
           history.map(p => [p.lat, p.lng] as L.LatLngExpression),
-          { color: '#6366F1', weight: 3, opacity: 0.65, dashArray: '4,8' }
+          { color: '#2563EB', weight: 2.5, opacity: 0.7, dashArray: '4,8' }
         );
-        trail.bindTooltip(`${amb.id} — movement trail`, { direction: 'top' });
+        trail.bindTooltip(`${amb.id} — busy on case`, { direction: 'top' });
         trailRef.current!.addLayer(trail);
 
         const startDot = L.circleMarker(
           [history[0].lat, history[0].lng] as L.LatLngExpression,
-          { radius: 5, color: '#6366F1', fillColor: '#A5B4FC', fillOpacity: 1, weight: 2 }
+          { radius: 4.5, color: '#2563EB', fillColor: '#BFDBFE', fillOpacity: 1, weight: 2 }
         );
         trailRef.current!.addLayer(startDot);
       }
     });
-  }, [ambulances, trackingAmbulanceId]);
+  }, [ambulances]);
 
   // Pan to tracked ambulance
   useEffect(() => {

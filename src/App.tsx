@@ -16,6 +16,14 @@ import HospitalDirectory from './components/HospitalDirectory';
 import { initialCalls, initialAmbulances, initialHospitals, congestionZones } from './data';
 import type { EmergencyCall, AmbulanceUnit, HospitalInfo } from './types';
 
+// Simple notification type for in-app alerts
+interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'success' | 'info' | 'warning' | 'error';
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function calcDist(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -64,13 +72,13 @@ function buildRouteExplanation(
   zones: typeof congestionZones
 ): RouteExplanation {
   const dist = calcDist(ambLat, ambLng, destLat, destLng);
-  const speedKmh = 60;
-  const durationMin = Math.max(3, Math.ceil((dist / speedKmh) * 60));
+  const baseSpeedKmh = 60;
 
   const midLat = (ambLat + destLat) / 2;
   const midLng = (ambLng + destLng) / 2;
   const avoidedZones: string[] = [];
   let maxCongestion = 'Clear';
+  let delayMinutes = 0;
 
   zones.forEach(zone => {
     const d = calcDist(midLat, midLng, zone.center.lat, zone.center.lng);
@@ -78,11 +86,17 @@ function buildRouteExplanation(
       if (zone.permanent) {
         avoidedZones.push(zone.label.split('—')[0].trim());
         maxCongestion = 'Heavy';
+        delayMinutes += zone.level === 'severe' ? 6 : 4;
       } else if (maxCongestion === 'Clear') {
         maxCongestion = 'Moderate';
+        delayMinutes += 2;
       }
     }
   });
+
+  const effectiveSpeedKmh = maxCongestion === 'Heavy' ? baseSpeedKmh * 0.6 : maxCongestion === 'Moderate' ? baseSpeedKmh * 0.8 : baseSpeedKmh;
+  const rawDuration = (dist / effectiveSpeedKmh) * 60;
+  const durationMin = Math.max(3, Math.ceil(rawDuration + delayMinutes));
 
   let reason = '';
   if (isHospital) {
@@ -91,7 +105,9 @@ function buildRouteExplanation(
       avoidedZones.length > 0
         ? `📍 Route recalculated (Dijkstra's Algorithm) to bypass ${avoidedZones.join(', ')} — permanently congested zones adding minimal extra distance.`
         : `✅ Direct corridor selected — no permanent congestion zones detected on this path.`,
-      `⚡ Priority green signal corridor requested for this vehicle. ETA: ${durationMin} min.`,
+      delayMinutes > 0
+        ? `🚦 Live congestion adds ~${delayMinutes} min. Adjusted ETA with traffic: ${durationMin} min.`
+        : `⚡ Priority green signal corridor requested for this vehicle. ETA: ${durationMin} min.`,
     ].join(' ');
   } else {
     reason = [
@@ -99,9 +115,11 @@ function buildRouteExplanation(
       avoidedZones.length > 0
         ? `⚠ Route deviates around ${avoidedZones.join(', ')} — permanently congested. Adds only ~${Math.ceil(avoidedZones.length * 0.7)} min.`
         : `✅ No permanent congestion zones on this path — direct route taken.`,
-      severity === 'critical'
-        ? `🔴 CRITICAL severity: Emergency siren corridor activated. Estimated arrival: ${durationMin} min.`
-        : `🟠 High priority corridor active. ETA: ${durationMin} min.`,
+      delayMinutes > 0
+        ? `🚦 Traffic along the corridor adds ~${delayMinutes} min. Adjusted ETA: ${durationMin} min.`
+        : severity === 'critical'
+          ? `🔴 CRITICAL severity: Emergency siren corridor activated. Estimated arrival: ${durationMin} min.`
+          : `🟠 High priority corridor active. ETA: ${durationMin} min.`,
     ].join(' ');
   }
 
@@ -111,7 +129,28 @@ function buildRouteExplanation(
     [destLat, destLng],
   ];
 
-  return { distance: `${dist.toFixed(1)} km`, duration: `${durationMin} min`, reason, waypoints, avoidedZones, trafficLevel: maxCongestion };
+  return {
+    distance: `${dist.toFixed(1)} km`,
+    duration: `${durationMin} min`,
+    reason,
+    waypoints,
+    avoidedZones,
+    trafficLevel: maxCongestion,
+    delayMinutes,
+  };
+}
+
+// Simple voice assistant using browser Speech Synthesis API
+function speakMessage(text: string) {
+  if (typeof window === 'undefined') return;
+  const synth = (window as typeof window & { speechSynthesis?: SpeechSynthesis }).speechSynthesis;
+  if (!synth) return;
+  if (synth.speaking) synth.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-IN';
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  synth.speak(utterance);
 }
 
 // ── Main App ──────────────────────────────────────────────────────────────────
@@ -124,6 +163,11 @@ export default function App() {
   const [hospitalBeds, setHospitalBeds] = useState<Record<string, { beds: number; icu: number }>>(
     Object.fromEntries(initialHospitals.map(h => [h.id, { beds: h.bedsAvailable, icu: h.icuBeds }]))
   );
+  // dynamic traffic model — active congestion zones can change over time for re-routing
+  const [activeZones, setActiveZones] = useState(congestionZones);
+  // small in-app notifications (e.g., Dispatch completed)
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [trackingAmbulanceId, setTrackingAmbulanceId] = useState<string | undefined>(undefined);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -148,6 +192,16 @@ export default function App() {
 
   const selectedCall = calls.find(c => c.id === selectedCallId) || null;
 
+  // Helper to push a temporary notification
+  const pushNotification = useCallback((n: Omit<AppNotification, 'id'>) => {
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const notif: AppNotification = { id, ...n };
+    setNotifications(prev => [...prev, notif]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(x => x.id !== id));
+    }, 6000);
+  }, []);
+
   // ── Clock ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -157,6 +211,9 @@ export default function App() {
   // ── Auto-detect caller location when modal opens ───────────────────────────
   useEffect(() => {
     if (!showNewCallModal) { setLocationDetected(false); setLocatingCaller(false); setDetectedAddress(''); return; }
+
+    // Voice alert for new incoming 108 emergency
+    speakMessage('Emergency incoming call. 108 dispatch center alert.');
 
     setLocatingCaller(true);
     setLocationDetected(false);
@@ -220,6 +277,18 @@ export default function App() {
   }, [showNewCallModal]);
 
   // ── Ambulance Movement Simulation ─────────────────────────────────────────
+  // Dynamic traffic simulation: periodically clear temporary congestion zones
+  useEffect(() => {
+    const t = setInterval(() => {
+      setActiveZones(prev => {
+        // 50% chance to clear non-permanent zones to mimic real-time traffic clearing
+        if (Math.random() < 0.5) return prev;
+        return prev.map(z => z.permanent ? z : { ...z, level: 'moderate' });
+      });
+    }, 30000); // every 30s
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     const interval = setInterval(() => {
       setAmbulances(prev =>
@@ -243,12 +312,35 @@ export default function App() {
 
           if (dist < 0.0006) {
             if (['dispatched', 'en_route'].includes(amb.status)) {
+              // Ambulance reached accident scene
               setCalls(prev2 => prev2.map(c =>
                 c.id === call.id ? { ...c, status: 'at_scene' as const } : c
               ));
               setSimulationStep(s => ({ ...s, [amb.id]: 'at_scene' }));
+              speakMessage(`Ambulance ${amb.id} has arrived at the emergency location for case ${call.id}.`);
               return { ...amb, status: 'at_scene' as const, location: { lat: targetLat, lng: targetLng }, routeHistory: [...amb.routeHistory, { lat: targetLat, lng: targetLng }] };
             }
+
+                        if (amb.status === 'to_hospital' && call.hospitalLocation) {
+              // Ambulance reached hospital — auto complete the case
+              setCalls(prev2 => prev2.map(c =>
+                c.id === call.id ? { ...c, status: 'completed' as const } : c
+              ));
+              setSimulationStep(s => ({ ...s, [amb.id]: 'completed' }));
+              setAmbulances(prev2 => prev2.map(a =>
+                a.id === amb.id ? { ...a, status: 'available', currentCallId: undefined, routeHistory: [...a.routeHistory, { lat: targetLat, lng: targetLng }] } : a
+              ));
+
+              // Notification + voice for dispatch completion
+              pushNotification({
+                type: 'success',
+                title: 'Dispatch completed',
+                message: `Ambulance ${amb.id} has reached ${call.assignedHospital || 'the hospital'}. Case ${call.id} completed and unit is now available.`,
+              });
+              speakMessage(`Ambulance ${amb.id} has reached ${call.assignedHospital || 'the hospital'}. Case ${call.id} marked as completed and ambulance is now available.`);
+              return { ...amb, status: 'available', currentCallId: undefined, location: { lat: targetLat, lng: targetLng }, routeHistory: [...amb.routeHistory, { lat: targetLat, lng: targetLng }] };
+            }
+
             return amb;
           }
 
@@ -288,9 +380,20 @@ export default function App() {
     setTrackingAmbulanceId(ambId);
     setActiveTab('map');
 
-    const exp = buildRouteExplanation(amb.location.lat, amb.location.lng, call.location.lat, call.location.lng, false, '', call.patientCount, call.severity, congestionZones);
+    const exp = buildRouteExplanation(amb.location.lat, amb.location.lng, call.location.lat, call.location.lng, false, '', call.patientCount, call.severity, activeZones);
     setRouteExplanations(prev => ({ ...prev, [ambId]: exp }));
     setSimulationStep(s => ({ ...s, [ambId]: 'dispatched' }));
+
+    // Voice guidance similar to Google Maps when dispatching ambulance
+    const congestionHint = exp.trafficLevel === 'Clear'
+      ? 'Road ahead is mostly clear.'
+      : exp.trafficLevel === 'Moderate'
+        ? 'Expect some slow-moving traffic ahead.'
+        : 'Heavy congestion ahead. Priority corridor recommended.';
+    speakMessage(
+      `Ambulance ${amb.id} dispatched to emergency ${call.id} at ${call.location.address}. ` +
+      `Estimated arrival in ${exp.duration}. ${congestionHint} Follow highlighted blue route and be prepared to take diversions where indicated.`
+    );
   }, [calls, ambulances]);
 
   // ── Confirm Hospital ───────────────────────────────────────────────────────
@@ -310,7 +413,29 @@ export default function App() {
       [hospital.id]: { beds: Math.max(0, (prev[hospital.id]?.beds ?? hospital.bedsAvailable) - 1), icu: prev[hospital.id]?.icu ?? hospital.icuBeds }
     }));
 
-    const exp = buildRouteExplanation(call.location.lat, call.location.lng, hospital.location.lat, hospital.location.lng, true, hospital.name, call.patientCount, call.severity, congestionZones);
+    const exp = buildRouteExplanation(
+      call.location.lat,
+      call.location.lng,
+      hospital.location.lat,
+      hospital.location.lng,
+      true,
+      hospital.name,
+      call.patientCount,
+      call.severity,
+      activeZones
+    );
+
+    // Voice guidance when starting transport to hospital
+    const congestionHint = exp.trafficLevel === 'Clear'
+      ? 'Traffic looks clear on the way.'
+      : exp.trafficLevel === 'Moderate'
+        ? 'You will face some slow segments; be ready to change lanes.'
+        : 'Severe congestion ahead. Follow the blue diversion route when announced.';
+    speakMessage(
+      `Ambulance ${amb.id} now transporting patient of case ${call.id} to ${hospital.name}. ` +
+      `Estimated arrival in ${exp.duration}. ${congestionHint}`
+    );
+
     setRouteExplanations(prev => ({ ...prev, [`${amb.id}_hospital`]: exp }));
     setSimulationStep(s => ({ ...s, [amb.id]: 'to_hospital' }));
     setTrackingAmbulanceId(amb.id);
@@ -327,9 +452,14 @@ export default function App() {
     if (amb) {
       setRouteExplanations(prev => { const n = { ...prev }; delete n[amb.id]; delete n[`${amb.id}_hospital`]; return n; });
       setSimulationStep(s => { const n = { ...s }; delete n[amb.id]; return n; });
+      pushNotification({
+        type: 'success',
+        title: 'Dispatch completed',
+        message: `Ambulance ${amb.id} dispatch cycle closed manually for case ${callId}. Unit marked available.`,
+      });
     }
     setTrackingAmbulanceId(undefined);
-  }, [ambulances]);
+  }, [ambulances, pushNotification]);
 
   // ── Register New Emergency ─────────────────────────────────────────────────
   const handleRegisterCall = useCallback(() => {
@@ -391,9 +521,11 @@ export default function App() {
         if (call.severity === 'critical' && icu >= 2) reasons.push(`🛏 ${icu} ICU beds`);
         if (dist < 10) reasons.push(`📍 ${dist.toFixed(1)} km — nearest`);
         if (beds > 10) reasons.push(`🟢 ${beds} beds available`);
+        if (beds === 0) reasons.push('🚫 Beds full — will not be auto-selected');
         const reason = reasons.length > 0 ? reasons.join(' | ') : `${dist.toFixed(1)} km, ${beds} beds`;
         return { ...h, bedsAvailable: beds, icuBeds: icu, dist, eta, score, reason };
       })
+      .filter(h => h.bedsAvailable > 0) // do not propose hospitals with 0 beds
       .sort((a, b) => a.score - b.score)
       .slice(0, 6); // Show top 6 nearest hospitals
   }, [hospitals, hospitalBeds]);
@@ -487,6 +619,37 @@ export default function App() {
 
       <main className="px-3 md:px-6 py-5 space-y-5">
 
+        {/* Top-right notifications */}
+        {notifications.length > 0 && (
+          <div className="fixed top-20 right-4 z-[2500] space-y-2 w-80">
+            {notifications.map(n => (
+              <div
+                key={n.id}
+                className={`shadow-lg rounded-xl border px-4 py-3 text-xs bg-white flex items-start gap-2 ${
+                  n.type === 'success'
+                    ? 'border-green-200'
+                    : n.type === 'error'
+                      ? 'border-red-200'
+                      : n.type === 'warning'
+                        ? 'border-amber-200'
+                        : 'border-slate-200'
+                }`}
+              >
+                <div className="mt-0.5">
+                  {n.type === 'success' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                  {n.type === 'error' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                  {n.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-500" />}
+                  {n.type === 'info' && <Info className="w-4 h-4 text-sky-500" />}
+                </div>
+                <div>
+                  <p className="font-bold text-[11px] text-slate-800">{n.title}</p>
+                  <p className="text-[11px] text-slate-600 mt-0.5">{n.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* ══ DASHBOARD ══════════════════════════════════════════════════════ */}
         {activeTab === 'dashboard' && (
           <div className="space-y-5">
@@ -526,7 +689,7 @@ export default function App() {
                     Full Map <ChevronRight className="w-3 h-3" />
                   </button>
                 </div>
-                <LiveMap calls={calls} ambulances={ambulances} hospitals={hospitals} congestionZones={congestionZones}
+                <LiveMap calls={calls} ambulances={ambulances} hospitals={hospitals} congestionZones={activeZones}
                   selectedCallId={selectedCallId || undefined} onSelectCall={id => { setSelectedCallId(id); setActiveTab('emergency'); }}
                   routeExplanations={routeExplanations} height="420px" />
               </div>
@@ -736,7 +899,7 @@ export default function App() {
                         <h3 className="font-bold text-sm flex items-center gap-2"><MapPin className="w-4 h-4 text-red-500" /> Live Tracking</h3>
                         {trackingAmbulanceId && <span className="text-[10px] font-bold text-red-600 flex items-center gap-1"><Radio className="w-3 h-3 animate-pulse" /> {trackingAmbulanceId}</span>}
                       </div>
-                      <LiveMap calls={calls} ambulances={ambulances} hospitals={hospitals} congestionZones={congestionZones}
+                      <LiveMap calls={calls} ambulances={ambulances} hospitals={hospitals} congestionZones={activeZones}
                         selectedCallId={selectedCallId || undefined} onSelectCall={id => setSelectedCallId(id)}
                         trackingAmbulanceId={trackingAmbulanceId} routeExplanations={routeExplanations} height="380px" />
                     </div>
@@ -956,10 +1119,22 @@ export default function App() {
 
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
               <div className="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
-                <h2 className="font-bold flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-                  Live Dispatch Map — OpenStreetMap (All India)
-                </h2>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h2 className="font-bold flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                    Live Dispatch Map — OpenStreetMap (All India)
+                  </h2>
+                  <span className="text-[11px] text-gray-500 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded-full">
+                      <Ambulance className="w-3 h-3 text-red-500" />
+                      <span>{ambulances.filter(a => ['dispatched', 'en_route', 'to_hospital'].includes(a.status)).length} vehicle(s) running</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 bg-yellow-50 px-2 py-0.5 rounded-full border border-yellow-200">
+                      <AlertTriangle className="w-3 h-3 text-yellow-600" />
+                      <span>Upcoming congestion zones: {activeZones.length}</span>
+                    </span>
+                  </span>
+                </div>
                 {trackingAmbulanceId ? (
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-orange-600 flex items-center gap-1 bg-orange-50 px-3 py-1.5 rounded-lg border border-orange-200">
@@ -971,7 +1146,7 @@ export default function App() {
                   <span className="text-xs text-gray-400">Click any ambulance to track it</span>
                 )}
               </div>
-              <LiveMap calls={calls} ambulances={ambulances} hospitals={hospitals} congestionZones={congestionZones}
+              <LiveMap calls={calls} ambulances={ambulances} hospitals={hospitals} congestionZones={activeZones}
                 selectedCallId={selectedCallId || undefined}
                 onSelectCall={id => { setSelectedCallId(id); setActiveTab('emergency'); }}
                 trackingAmbulanceId={trackingAmbulanceId}
@@ -1025,23 +1200,8 @@ export default function App() {
 
         {/* ══ HOSPITAL DIRECTORY ═════════════════════════════════════════════ */}
         {activeTab === 'directory' && (
-          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-            <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Building2 className="w-6 h-6" />
-                  <div>
-                    <h2 className="text-lg font-bold">Hospital Directory</h2>
-                    <p className="text-xs text-blue-200">All India Hospital Network — Government & Private</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-extrabold">{hospitals.length}</p>
-                  <p className="text-xs text-blue-200">Hospitals</p>
-                </div>
-              </div>
-            </div>
-            <HospitalDirectory />
+          <div className="space-y-5">
+            <HospitalDirectory ambulances={ambulances} />
           </div>
         )}
 
